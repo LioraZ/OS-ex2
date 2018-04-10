@@ -6,10 +6,11 @@
 
 #define MAX_JOB_LEN 1024
 #define MAX_ARGS 20
-#define UNSUCCESSFUL_FORK "Unsuccessful fork"
-#define BAD_ALLOC "Bad memory allocation"
+#define UNSUCCESSFUL_FORK "Unsuccessful fork\n"
+#define BAD_ALLOC "Bad memory allocation\n"
+#define SYS_CALL_ERR "Error calling system call\n"
 
-typedef struct {
+typedef struct Job {
     pid_t pid;
     char *jobName;
     char *args[MAX_ARGS];
@@ -23,7 +24,9 @@ typedef struct {
     int size;
 } JobsQueue;
 
-Job *newJob(char *jobString);
+Job *newJob(char *n_jobName, char *n_args[]);
+void cpyArgs(Job *job, char *n_args[]);
+void freeArgs(char *args[]);
 void deleteJob(Job *job);
 JobsQueue *createJobsQueue();
 JobsQueue *createJobQueue(Job *job);
@@ -42,41 +45,69 @@ void checkForWait(int wait, pid_t pid);
 void exitPrompt(char *error);
 
 int main() {
-    int wait;
+    int wait_;
     JobsQueue *jobsQueue = createJobsQueue();
     if (!jobsQueue) exitPrompt(BAD_ALLOC);
     do {
-        Job *job = getPromptJob(&wait);
+        Job *job = getPromptJob(&wait_);
+        if (!job) break;
         pid_t pid = fork(); //will only get legal job
         if (pid == 0) {
             execv(job->jobName, job->args);//if it go wait needs to free itself and needs to free job when its finished
+            perror(SYS_CALL_ERR);
+            deleteJob(job);
             exit(1);//or exit 0?
         }
         else if (pid > 0) {
             job->pid = pid;
             printf("%d\n", pid);
             addJob(jobsQueue, job); //Job *job = getPromptJob(&wait);
-            checkForWait(wait, pid);
+            checkForWait(wait_, pid);
             removeJob(jobsQueue, pid);//change function to accept job
         }
-        else if (pid == -1) {
+        else if (pid < 0) {
             deleteJob(job);
-            printError(UNSUCCESSFUL_FORK);
+            perror(UNSUCCESSFUL_FORK);
+            //printError(UNSUCCESSFUL_FORK);
         }
     } while (1);
+    wait(NULL);//kill instead of wait
+    freeJobsQueue(jobsQueue);
 }
 
-Job *newJob(char *jobString) {
+Job *newJob(char *n_jobName, char *n_args[]) {
     Job *job = (Job *)malloc(sizeof(Job));
     if (!job) {
-        free(jobString);
+        free(n_jobName);
+        freeArgs(n_args);
+        perror(BAD_ALLOC);
         return NULL;
     }
-    job->jobStr = jobString;
+    job->jobName = n_jobName;
+    cpyArgs(job, n_args);
     job->next = NULL;
+}
+void cpyArgs(Job *job, char *n_args[]) {
+    int i = 0;
+        char *curr = n_args[i];
+        while (curr) {
+            (job->args)[i] = curr;
+            curr = n_args[i++];
+    }
+    (job->args)[i] = curr;
+}
+void freeArgs(char *args[]) {
+    int i = 0;
+    char *curr = args[i];
+    while (curr) {
+        free(curr);
+        curr = args[i++];
+    }
 }
 void deleteJob(Job *job) {
     if (!job) return;
+    free(job->jobName);
+    freeArgs(job->args);
     free(job);
 }
 JobsQueue *createJobsQueue() {
@@ -111,14 +142,14 @@ JobsQueue *addJob(JobsQueue *jobsQueue, Job *job) {
     }
     jobsQueue->secondToLast = jobsQueue->last;
     jobsQueue->last = job;
-    (Job *)jobsQueue->secondToLast->next = jobsQueue->last;
+    jobsQueue->secondToLast->next = jobsQueue->last;
     (jobsQueue->size)++;
     return jobsQueue;
 }
 void removeFirst(JobsQueue *jobsQueue) {
     if (!jobsQueue || isEmpty(jobsQueue)) return;
     Job *temp = jobsQueue->first;
-    jobsQueue->first = (Job *)jobsQueue->first->next;
+    jobsQueue->first = jobsQueue->first->next;
     deleteJob(temp);
     (jobsQueue->size)--;
 }
@@ -129,10 +160,10 @@ void removeJob(JobsQueue *jobsQueue, pid_t pid) {
         return;
     }
     Job *curr = jobsQueue->first;
-    Job *next = (Job *)curr->next;
+    Job *next = curr->next;
     while (next && next->pid != pid) {
         curr = next;
-        next = (Job *)next->next;
+        next = next->next;
     }
     if (!next) return; //didn't find pid
     curr->next = next->next;
@@ -143,10 +174,10 @@ void removeJob(JobsQueue *jobsQueue, pid_t pid) {
 }
 void updateLastIndex(JobsQueue *jobsQueue) {
     Job *curr = jobsQueue->first;
-    Job *next = (Job *)curr->next;
+    Job *next = curr->next;
     while (next != jobsQueue->secondToLast) {
         curr = next;
-        next = (Job *)next->next;
+        next = next->next;
     }
     jobsQueue->secondToLast = curr;
     jobsQueue->last = next;
@@ -156,7 +187,7 @@ void freeJobsQueue(JobsQueue *jobsQueue) {
     Job *curr = jobsQueue->first;
     while (curr != NULL) {
         Job *temp = curr;
-        curr = (Job *)curr->next;
+        curr = curr->next;
         deleteJob(temp);
     }
     free(jobsQueue);
@@ -165,10 +196,12 @@ void freeJobsQueue(JobsQueue *jobsQueue) {
 Job *getPromptJob(int *wait) {
     printf("prompt>");
     char *jobString = (char *)malloc(MAX_JOB_LEN);//check bad alloc
-    if (!jobString) return NULL;////DON'T DO THIS!!!!!
+    if (!jobString) {
+        perror(BAD_ALLOC);
+        return NULL;
+    }
     fgets(jobString, MAX_JOB_LEN, stdin);
-    Job *job = newJob(jobString);
-    if (!job) return NULL;
+    jobString[strlen(jobString) - 2] = 0;
 
     char *args[MAX_ARGS];
     const char space[2] = " ";
@@ -179,9 +212,13 @@ Job *getPromptJob(int *wait) {
     while(token) {
         token = strtok(NULL, space);
         args[i++] = token;//might be bug here, CHECK!!
-    }
-    if (i >= 1) *wait = (strcmp(args[i], "&") == 0);
+    }//remove backslash n
+    if (i >= 1) *wait = (strcmp(args[i - 2], "&") == 0);
+    Job *job = newJob(args[0], &args[1]);
+    if (!job) return NULL;
+    return job;
 }
+
 void printError(char *error) {
     fprintf( stderr, error);
     fprintf( stderr, "\n");
@@ -191,6 +228,8 @@ void checkForWait(int wait, pid_t pid) {
     waitpid(pid, NULL, 0);
 }
 void exitPrompt(char *error) {
-    printError(error);
+    //printError(error);
+    perror(error);
+    //free all memory
     exit(1);//exit status for error?
 }

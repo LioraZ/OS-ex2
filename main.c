@@ -25,23 +25,98 @@ typedef struct {
     int size;
 } JobsQueue;
 
+/**
+ * The function creates a new job given its parameters.
+ * @param n_jobName the name of the job.
+ * @return a pointer to the newly created job.
+ */
 Job *newJob(char *n_jobName, char *[]);
+/**
+ * The function copy's a job's args to the job.
+ * @param job The given job.
+ * @param n_args The job's args to copied.
+ */
 void cpyArgs(Job *job, char *n_args[]);
+/**
+ * The function frees the job's args.
+ * @param args The args to free.
+ */
 void freeArgs(char *args[]);
+/**
+ * The function deletes the given job.
+ * @param job The given job.
+ */
 void deleteJob(Job *job);
+/**
+ * The function creates a new JobQueue.
+ * @return The new jobQueue.
+ */
 JobsQueue *createJobsQueue();
+/**
+ * The function creates a new jobsQueue given a job.
+ * @param The given job.
+ * @return The new jobsQueue.
+ */
 JobsQueue *createJobQueue(Job *job);
+/**
+ * The function returns 1 if the jobsQueue is empty and 0 else.
+ * @param jobsQueue The given jobsQueue.
+ * @return 1 if the jobsQueue is empty and 0 else.
+ */
 int isEmpty(JobsQueue *jobsQueue);
+/**
+ * The function add a new job to the jobsQueue.
+ * @param jobsQueue THe given jobsQueue.
+ * @param job The given job.
+ * @return The jobsQueue.
+ */
 JobsQueue *addJob(JobsQueue *jobsQueue, Job *job);
-void removeFirst(JobsQueue *jobsQueue);
-void removeJob(JobsQueue *jobsQueue, pid_t pid);
+/**
+ * The function frees the jobsQueue.
+ * @param jobsQueue The jobsQueue.
+ */
 void freeJobsQueue(JobsQueue *jobsQueue);
-
-
+/**
+ * The function returns a job received from prompt.
+ * @param wait Flag to wait for fork to finish.
+ * @return The new job.
+ */
 Job *getPromptJob(int *wait);
+/**
+ * The function checks if thread pid needs to waited for, and waits for it.
+ * @param wait The flag.
+ * @param pid The thread.
+ */
 void checkForWait(int wait, pid_t pid);
-
+/**
+ * The function exits the command prompt with an error msg.
+ * @param error The error msg.
+ */
 void exitPrompt(char *error);
+/**
+ * The function checks the jobs name and will execute specific jobs accordingly.
+ * @param job The given job.
+ * @param jobsQueue The jobsQueue.
+ * @return 1 if should continue or 0 to exec and fork.
+ */
+int checkJobName(Job *job, JobsQueue *jobsQueue);
+/**
+ * The function will print the jobs from the jobsQueue.
+ * @param jobsQueue The jobsQueue.
+ */
+void printJobs(JobsQueue *jobsQueue);
+/**
+ * The function will removed jobs that have completed from the jobsQueue.
+ * @param jobsQueue The jobsQueue.
+ */
+void removeCompletedJobs(JobsQueue *jobsQueue);
+/**
+ * The function will changeDir according to bash's cd.
+ * @param args cd's args.
+ * @return success or failure.
+ */
+int cd(char *args[]);
+
 
 int main() {
     int wait_;
@@ -51,24 +126,23 @@ int main() {
         Job *job = getPromptJob(&wait_);
         if (!job) break;
         if (checkJobName(job, jobsQueue)) continue;
-        pid_t pid = fork(); //will only get legal job
+        pid_t pid = fork();
         if (pid == 0) {
-            execvp(job->jobName, job->args);//if it go wait needs to free itself and needs to free job when its finished
+            execvp(job->jobName, job->args);
             perror(SYS_CALL_ERR);
             deleteJob(job);
             exit(1);//or exit 0?
         }
         else if (pid > 0) {
             job->pid = pid;
-            addJob(jobsQueue, job); //check for null
-            checkForWait(wait_, pid);
             printf("%d\n", pid);
-           // removeJob(jobsQueue, pid);//change function to accept job
+            jobsQueue = addJob(jobsQueue, job); //check for null
+            checkForWait(wait_, pid);
         }
         else if (pid < 0) {
             deleteJob(job);
             perror(UNSUCCESSFUL_FORK);
-            //printError(UNSUCCESSFUL_FORK);
+            //exit w freeing
         }
     } while (1);
     wait(NULL);//kill instead of wait
@@ -152,32 +226,6 @@ JobsQueue *addJob(JobsQueue *jobsQueue, Job *job) {
     (jobsQueue->size)++;
     return jobsQueue;
 }
-void removeFirst(JobsQueue *jobsQueue) {
-    if (!jobsQueue || isEmpty(jobsQueue)) return;
-    Job *temp = jobsQueue->first;
-    jobsQueue->first = jobsQueue->first->next;
-    if (jobsQueue->size == 1) jobsQueue->last = NULL;
-    deleteJob(temp);
-    (jobsQueue->size)--;
-}
-void removeJob(JobsQueue *jobsQueue, pid_t pid) {
-    if (!jobsQueue || isEmpty(jobsQueue)) return;
-    if (jobsQueue->first->pid == pid) {
-        removeFirst(jobsQueue);
-        return;
-    }
-    Job *curr = jobsQueue->first;
-    Job *next = curr->next;
-    while (next && next->pid != pid) {
-        curr = next;
-        next = next->next;
-    }
-    if (!next) return;
-    curr->next = next->next;
-    if (next == jobsQueue->last) jobsQueue->last = curr;
-    deleteJob(next);
-    (jobsQueue->size)--;
-}
 void freeJobsQueue(JobsQueue *jobsQueue) {
     if (!jobsQueue) return;
     Job *curr = jobsQueue->first;
@@ -188,17 +236,22 @@ void freeJobsQueue(JobsQueue *jobsQueue) {
     }
     free(jobsQueue);
 }
-
-Job *getPromptJob(int *wait) {
-    printf("prompt>");
-    char *jobString = (char *)malloc(MAX_JOB_LEN);//check bad alloc
-    if (!jobString) {
-        perror(BAD_ALLOC);
-        return NULL;
-    }
-    fgets(jobString, MAX_JOB_LEN, stdin);
+char *getInput() {
+    char *jobString;
+    do {
+        printf("prompt>");
+        jobString = (char *)malloc(MAX_JOB_LEN);//check bad alloc
+        if (!jobString) {
+            perror(BAD_ALLOC);
+            return NULL;
+        }
+        fgets(jobString, MAX_JOB_LEN, stdin);
+    } while (strcmp(jobString, "\n") == 0);
     jobString[strlen(jobString) - 1] = 0;
-
+    return jobString;
+}
+Job *getPromptJob(int *wait) {
+    char *jobString = getInput();
     char *args[MAX_ARGS];
     const char space[2] = " ";
     int i = 0;
@@ -229,13 +282,8 @@ int checkJobName(Job *job, JobsQueue *jobsQueue) {
         exit(1);
     }
     if (strcmp(jobName, "jobs") == 0) {
-        Job *curr = jobsQueue->first;
-        while (curr) {
-            if ((getpgid(curr->pid) < 0)) removeJob(jobsQueue, curr->pid);
-            else printf("%s\t", curr->jobName);
-            curr = curr->next;
-        }
-        printf("%d\n", getpid());
+        removeCompletedJobs(jobsQueue);
+        printJobs(jobsQueue);
         return 1;
     }
     if (strcmp(jobName, "cd") == 0) {
@@ -246,7 +294,38 @@ int checkJobName(Job *job, JobsQueue *jobsQueue) {
     return 0;
 }
 
-int cd(char *args[]){
+void printJobs(JobsQueue *jobsQueue) {
+    Job *job = jobsQueue->first;
+    while (job) {
+        printf("%d\t", job->pid);
+        int i = 0;
+        while (job->args[i]) printf("%s ", job->args[i++]);
+        printf("\n");
+        job = job->next;
+    }
+}
+
+void removeCompletedJobs(JobsQueue *jobsQueue) {
+    Job *curr = jobsQueue->first;
+    if (!curr) return;
+    Job *next = curr->next;
+    while (next) {
+        if ((getpgid(next->pid) < 0)) {
+            curr->next = next->next;
+            deleteJob(next);
+        }
+        curr = curr->next;
+        if (curr) next = curr->next;
+        else next = NULL;
+    }
+    if (jobsQueue->first && (getpgid(jobsQueue->first->pid) < 0)) {
+        curr = jobsQueue->first;
+        jobsQueue->first = jobsQueue->first->next;
+        deleteJob(curr);
+    }
+}
+
+int cd(char *args[]) {
     char *pth = args[1];//what if no path
     char path[MAX_PATH_SIZE];
     strcpy(path,pth);
